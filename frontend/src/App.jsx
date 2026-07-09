@@ -25,6 +25,7 @@ function App() {
         <UserButton />
         <p>Signed in as {user?.primaryEmailAddress?.emailAddress}</p>
         <Domains />
+        <AdminPanel />
       </SignedIn>
     </div>
   )
@@ -46,7 +47,8 @@ function Domains() {
       headers: { Authorization: `Bearer ${token}` },
     })
     if (!res.ok) {
-      setError(`Error ${res.status}`)
+      const body = await res.json().catch(() => ({}))
+      setError(body.error || `Error ${res.status}`)
       setLoading(false)
       return
     }
@@ -72,7 +74,8 @@ function Domains() {
       body: JSON.stringify({ domainName: newDomain }),
     })
     if (!res.ok) {
-      setError(`Error ${res.status}`)
+      const body = await res.json().catch(() => ({}))
+      setError(body.error || `Error ${res.status}`)
       return
     }
     setNewDomain('')
@@ -107,6 +110,202 @@ function Domains() {
   )
 }
 
+function AdminPanel() {
+  const { getToken } = useAuth()
+  const API = import.meta.env.VITE_API_URL
+  const [isAdmin, setIsAdmin] = useState(null)
+  const [clients, setClients] = useState([])
+  const [error, setError] = useState(null)
+  const [loading, setLoading] = useState(false)
+
+  const [newDomainFor, setNewDomainFor] = useState(null)
+  const [newDomainName, setNewDomainName] = useState('')
+
+  const [editingSubFor, setEditingSubFor] = useState(null)
+  const [subPlan, setSubPlan] = useState('base')
+  const [subMaxDomains, setSubMaxDomains] = useState(5)
+  const [subMaxMailboxes, setSubMaxMailboxes] = useState(5)
+  const [subStatus, setSubStatus] = useState('active')
+
+  async function checkAdmin() {
+    const token = await getToken()
+    const res = await fetch(`${API}/api/admin/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    setIsAdmin(res.ok)
+    if (res.ok) fetchClients()
+  }
+
+  async function fetchClients() {
+    setLoading(true)
+    const token = await getToken()
+    const res = await fetch(`${API}/api/admin/clients`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      setError(body.error || `Error ${res.status}`)
+      setLoading(false)
+      return
+    }
+    const data = await res.json()
+    setClients(data.clients)
+    setLoading(false)
+  }
+
+  useEffect(() => {
+    checkAdmin()
+  }, [])
+
+  async function addDomainForClient(clientId) {
+    if (!newDomainName) return
+    const token = await getToken()
+    const res = await fetch(`${API}/api/admin/clients/${clientId}/domains`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ domainName: newDomainName }),
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      setError(body.error || `Error ${res.status}`)
+      return
+    }
+    setNewDomainName('')
+    setNewDomainFor(null)
+    fetchClients()
+  }
+
+  async function saveSubscription(clientId) {
+    const token = await getToken()
+    const res = await fetch(`${API}/api/admin/clients/${clientId}/subscription`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        plan: subPlan,
+        maxDomains: Number(subMaxDomains),
+        maxMailboxesPerDomain: Number(subMaxMailboxes),
+        status: subStatus,
+      }),
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      setError(body.error || `Error ${res.status}`)
+      return
+    }
+    setEditingSubFor(null)
+    fetchClients()
+  }
+
+  async function deleteDomain(domainId) {
+    const token = await getToken()
+    const res = await fetch(`${API}/api/admin/domains/${domainId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      setError(body.error || `Error ${res.status}`)
+      return
+    }
+    fetchClients()
+  }
+
+  if (isAdmin === null) return null
+  if (isAdmin === false) return null
+
+  return (
+    <div>
+      <hr />
+      <h2>Admin Panel</h2>
+
+      {error && <p>{error}</p>}
+      {loading && <p>Loading...</p>}
+
+      {clients.map((c) => (
+        <div key={c.id}>
+          <h3>{c.name || 'No name'} — {c.email}</h3>
+          <p>
+            Plan: {c.subscription?.plan || 'none'} | Max domains:{' '}
+            {c.subscription?.maxDomains ?? '-'} | Max mailboxes/domain:{' '}
+            {c.subscription?.maxMailboxesPerDomain ?? '-'} | Status:{' '}
+            {c.subscription?.status || '-'}
+          </p>
+          <button
+            onClick={() => {
+              setSubPlan(c.subscription?.plan || 'base')
+              setSubMaxDomains(c.subscription?.maxDomains ?? 5)
+              setSubMaxMailboxes(c.subscription?.maxMailboxesPerDomain ?? 5)
+              setSubStatus(c.subscription?.status || 'active')
+              setEditingSubFor(c.id)
+            }}
+          >
+            Edit Plan
+          </button>
+
+          {editingSubFor === c.id && (
+            <div>
+              <input
+                value={subPlan}
+                onChange={(e) => setSubPlan(e.target.value)}
+                placeholder="plan"
+              />
+              <input
+                type="number"
+                value={subMaxDomains}
+                onChange={(e) => setSubMaxDomains(e.target.value)}
+                placeholder="max domains"
+              />
+              <input
+                type="number"
+                value={subMaxMailboxes}
+                onChange={(e) => setSubMaxMailboxes(e.target.value)}
+                placeholder="max mailboxes"
+              />
+              <input
+                value={subStatus}
+                onChange={(e) => setSubStatus(e.target.value)}
+                placeholder="status"
+              />
+              <button onClick={() => saveSubscription(c.id)}>Save</button>
+              <button onClick={() => setEditingSubFor(null)}>Cancel</button>
+            </div>
+          )}
+
+          <h4>Domains</h4>
+          <ul>
+            {c.domains.map((d) => (
+              <li key={d.id}>
+                {d.domainName} — {d.status}{' '}
+                <button onClick={() => deleteDomain(d.id)}>Remove</button>
+              </li>
+            ))}
+          </ul>
+          {c.domains.length === 0 && <p>No domains.</p>}
+
+          <button onClick={() => setNewDomainFor(c.id)}>Add Domain</button>
+          {newDomainFor === c.id && (
+            <div>
+              <input
+                value={newDomainName}
+                onChange={(e) => setNewDomainName(e.target.value)}
+                placeholder="example.com"
+              />
+              <button onClick={() => addDomainForClient(c.id)}>Save</button>
+              <button onClick={() => setNewDomainFor(null)}>Cancel</button>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function DnsSetup({ domain }) {
   const { getToken } = useAuth()
   const API = import.meta.env.VITE_API_URL
@@ -123,7 +322,8 @@ function DnsSetup({ domain }) {
       headers: { Authorization: `Bearer ${token}` },
     })
     if (!res.ok) {
-      setError(`Error ${res.status}`)
+      const body = await res.json().catch(() => ({}))
+      setError(body.error || `Error ${res.status}`)
       setLoading(false)
       return
     }
@@ -212,7 +412,8 @@ function Mailboxes({ domain }) {
       headers: { Authorization: `Bearer ${token}` },
     })
     if (!res.ok) {
-      setError(`Error ${res.status}`)
+      const body = await res.json().catch(() => ({}))
+      setError(body.error || `Error ${res.status}`)
       setLoading(false)
       return
     }
@@ -245,7 +446,8 @@ function Mailboxes({ domain }) {
       body: JSON.stringify({ localPart, name: localPart, password }),
     })
     if (!res.ok) {
-      setError(`Error ${res.status}`)
+      const body = await res.json().catch(() => ({}))
+      setError(body.error || `Error ${res.status}`)
       return
     }
     setLocalPart('')
@@ -262,7 +464,8 @@ function Mailboxes({ domain }) {
       headers: { Authorization: `Bearer ${token}` },
     })
     if (!res.ok) {
-      setError(`Error ${res.status}`)
+      const body = await res.json().catch(() => ({}))
+      setError(body.error || `Error ${res.status}`)
       return
     }
     fetchMailboxes()
@@ -287,7 +490,8 @@ function Mailboxes({ domain }) {
       body: JSON.stringify({ password: newPass }),
     })
     if (!res.ok) {
-      setError(`Error ${res.status}`)
+      const body = await res.json().catch(() => ({}))
+      setError(body.error || `Error ${res.status}`)
       return
     }
     setChangingFor(null)

@@ -46,6 +46,22 @@ async function requireAdmin(req, res) {
   return userId;
 }
 
+function validateDomainName(name) {
+  if (!name) return null;
+  const domainRegex = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
+  const cleaned = name.trim().toLowerCase();
+  return domainRegex.test(cleaned) ? cleaned : null;
+}
+
+async function getLimits(clientId) {
+  const rows = await db.select().from(subscriptions).where(eq(subscriptions.clientId, clientId));
+  const sub = rows[0];
+  return {
+    maxDomains: sub?.maxDomains ?? 5,
+    maxMailboxesPerDomain: sub?.maxMailboxesPerDomain ?? 5,
+  };
+}
+
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
 });
@@ -82,9 +98,8 @@ app.post('/api/my/domains', async (req, res) => {
     if (!domainName) {
       return res.status(400).json({ error: 'domainName is required' });
     }
-    const domainRegex = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
-    const cleaned = domainName.trim().toLowerCase();
-    if (!domainRegex.test(cleaned)) {
+    const cleaned = validateDomainName(domainName);
+    if (!cleaned) {
       return res.status(400).json({ error: 'Invalid domain name. Use format: example.com' });
     }
     const client = await getOrCreateClient(userId, clerkClient);
@@ -95,6 +110,12 @@ app.post('/api/my/domains', async (req, res) => {
       .where(and(eq(domains.clientId, client.id), eq(domains.domainName, cleaned)));
     if (existing.length > 0) {
       return res.status(409).json({ error: 'You already added this domain' });
+    }
+
+    const limits = await getLimits(client.id);
+    const currentDomains = await db.select().from(domains).where(eq(domains.clientId, client.id));
+    if (currentDomains.length >= limits.maxDomains) {
+      return res.status(403).json({ error: `Domain limit reached (${limits.maxDomains}). Upgrade your plan to add more.` });
     }
 
     const inserted = await db
@@ -201,6 +222,12 @@ app.post('/api/domains/:domain/mailboxes', async (req, res) => {
       return res.status(400).json({ error: 'localPart and password are required' });
     }
     const { domain } = req.params;
+    const limits = await getLimits(client.id);
+    const existingMailboxes = await axios.get(`https://api.migadu.com/v1/domains/${domain}/mailboxes`, { auth: migaduAuth });
+    const count = existingMailboxes.data.mailboxes?.length || 0;
+    if (count >= limits.maxMailboxesPerDomain) {
+      return res.status(403).json({ error: `Mailbox limit reached for this domain (${limits.maxMailboxesPerDomain}). Upgrade your plan to add more.` });
+    }
     const response = await axios.post(
       `https://api.migadu.com/v1/domains/${domain}/mailboxes`,
       { local_part: localPart, name: name || localPart, password },
@@ -282,6 +309,108 @@ app.get('/api/admin/me', async (req, res) => {
     const adminId = await requireAdmin(req, res);
     if (!adminId) return;
     res.json({ isAdmin: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/admin/clients/:clientId/domains', async (req, res) => {
+  try {
+    const adminId = await requireAdmin(req, res);
+    if (!adminId) return;
+    const clientId = Number(req.params.clientId);
+    const cleaned = validateDomainName(req.body.domainName);
+    if (!cleaned) {
+      return res.status(400).json({ error: 'Invalid domain name. Use format: example.com' });
+    }
+    const clientRows = await db.select().from(clients).where(eq(clients.id, clientId));
+    if (clientRows.length === 0) {
+      return res.status(404).json({ error: 'Client not found' });
+    }
+    const existing = await db
+      .select()
+      .from(domains)
+      .where(and(eq(domains.clientId, clientId), eq(domains.domainName, cleaned)));
+    if (existing.length > 0) {
+      return res.status(409).json({ error: 'Domain already exists for this client' });
+    }
+    const inserted = await db
+      .insert(domains)
+      .values({ clientId, domainName: cleaned, status: 'pending' })
+      .returning();
+
+    let existsInMigadu = false;
+    try {
+      await axios.get(`https://api.migadu.com/v1/domains/${cleaned}`, { auth: migaduAuth });
+      existsInMigadu = true;
+    } catch (e) {
+      existsInMigadu = false;
+    }
+    if (!existsInMigadu) {
+      try {
+        await axios.post('https://api.migadu.com/v1/domains', { domain_name: cleaned }, { auth: migaduAuth });
+      } catch (migaduError) {
+        console.error('Migadu domain create failed:', {
+          status: migaduError.response?.status,
+          data: migaduError.response?.data,
+          message: migaduError.message,
+        });
+        await db.delete(domains).where(eq(domains.id, inserted[0].id));
+        return res.status(500).json({ error: 'Failed to create domain in Migadu' });
+      }
+    }
+    res.json({ domain: inserted[0] });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/admin/clients/:clientId/subscription', async (req, res) => {
+  try {
+    const adminId = await requireAdmin(req, res);
+    if (!adminId) return;
+    const clientId = Number(req.params.clientId);
+    const { plan, maxDomains, maxMailboxesPerDomain, status } = req.body;
+    const clientRows = await db.select().from(clients).where(eq(clients.id, clientId));
+    if (clientRows.length === 0) {
+      return res.status(404).json({ error: 'Client not found' });
+    }
+    const existing = await db
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.clientId, clientId));
+    let row;
+    if (existing.length > 0) {
+      const updated = await db
+        .update(subscriptions)
+        .set({ plan, maxDomains, maxMailboxesPerDomain, status })
+        .where(eq(subscriptions.clientId, clientId))
+        .returning();
+      row = updated[0];
+    } else {
+      const inserted = await db
+        .insert(subscriptions)
+        .values({ clientId, plan, maxDomains, maxMailboxesPerDomain, status })
+        .returning();
+      row = inserted[0];
+    }
+    res.json({ subscription: row });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/admin/domains/:domainId', async (req, res) => {
+  try {
+    const adminId = await requireAdmin(req, res);
+    if (!adminId) return;
+    const domainId = Number(req.params.domainId);
+    const rows = await db.select().from(domains).where(eq(domains.id, domainId));
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Domain not found' });
+    }
+    await db.delete(domains).where(eq(domains.id, domainId));
+    res.json({ deleted: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
