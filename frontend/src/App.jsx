@@ -91,6 +91,7 @@ function Domains() {
         {domains.map((d) => (
           <li key={d.id}>
             {d.domainName} — {d.status}
+            <Mailboxes domain={d.domainName} />
           </li>
         ))}
       </ul>
@@ -101,6 +102,177 @@ function Domains() {
         placeholder="example.com"
       />
       <button onClick={addDomain}>Add Domain</button>
+    </div>
+  )
+}
+
+function Mailboxes({ domain }) {
+  const { getToken } = useAuth()
+  const API = import.meta.env.VITE_API_URL
+  const [mailboxes, setMailboxes] = useState([])
+  const [localPart, setLocalPart] = useState('')
+  const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [error, setError] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [changingFor, setChangingFor] = useState(null)
+  const [newPass, setNewPass] = useState('')
+  const [newPassConfirm, setNewPassConfirm] = useState('')
+
+  async function fetchMailboxes() {
+    setLoading(true)
+    setError(null)
+    const token = await getToken()
+    const res = await fetch(`${API}/api/domains/${domain}/mailboxes`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) {
+      setError(`Error ${res.status}`)
+      setLoading(false)
+      return
+    }
+    const data = await res.json()
+    setMailboxes(data.mailboxes || [])
+    setLoading(false)
+  }
+
+  useEffect(() => {
+    fetchMailboxes()
+  }, [domain])
+
+  async function createMailbox() {
+    if (!localPart || !password) {
+      setError('Local part and password required')
+      return
+    }
+    if (password !== confirmPassword) {
+      setError('Passwords do not match')
+      return
+    }
+    setError(null)
+    const token = await getToken()
+    const res = await fetch(`${API}/api/domains/${domain}/mailboxes`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ localPart, name: localPart, password }),
+    })
+    if (!res.ok) {
+      setError(`Error ${res.status}`)
+      return
+    }
+    setLocalPart('')
+    setPassword('')
+    setConfirmPassword('')
+    fetchMailboxes()
+  }
+
+  async function deleteMailbox(lp) {
+    setError(null)
+    const token = await getToken()
+    const res = await fetch(`${API}/api/domains/${domain}/mailboxes/${lp}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) {
+      setError(`Error ${res.status}`)
+      return
+    }
+    fetchMailboxes()
+  }
+
+  async function changePassword(lp) {
+    if (!newPass) {
+      setError('Password required')
+      return
+    }
+    if (newPass !== newPassConfirm) {
+      setError('Passwords do not match')
+      return
+    }
+    const token = await getToken()
+    const res = await fetch(`${API}/api/domains/${domain}/mailboxes/${lp}/password`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ password: newPass }),
+    })
+    if (!res.ok) {
+      setError(`Error ${res.status}`)
+      return
+    }
+    setChangingFor(null)
+    setNewPass('')
+    setNewPassConfirm('')
+    setError(null)
+  }
+
+  return (
+    <div>
+      <h3>Mailboxes for {domain}</h3>
+
+      {error && <p>{error}</p>}
+      {loading && <p>Loading...</p>}
+
+      <ul>
+        {mailboxes.map((m) => (
+          <li key={m.address}>
+            {m.address}
+            <button onClick={() => deleteMailbox(m.local_part)}>Delete</button>
+            <button onClick={() => setChangingFor(m.local_part)}>Change Password</button>
+            {changingFor === m.local_part && (
+              <div>
+                <input
+                  type="password"
+                  value={newPass}
+                  onChange={(e) => setNewPass(e.target.value)}
+                  placeholder="new password"
+                />
+                <input
+                  type="password"
+                  value={newPassConfirm}
+                  onChange={(e) => setNewPassConfirm(e.target.value)}
+                  placeholder="confirm new password"
+                />
+                <button onClick={() => changePassword(m.local_part)}>Save</button>
+                <button
+                  onClick={() => {
+                    setChangingFor(null)
+                    setNewPass('')
+                    setNewPassConfirm('')
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+      {mailboxes.length === 0 && <p>No mailboxes yet.</p>}
+
+      <input
+        value={localPart}
+        onChange={(e) => setLocalPart(e.target.value)}
+        placeholder="hello"
+      />
+      <input
+        type="password"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        placeholder="password"
+      />
+      <input
+        type="password"
+        value={confirmPassword}
+        onChange={(e) => setConfirmPassword(e.target.value)}
+        placeholder="confirm password"
+      />
+      <button onClick={createMailbox}>Create Mailbox</button>
     </div>
   )
 }
