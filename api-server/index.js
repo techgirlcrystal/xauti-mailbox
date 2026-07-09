@@ -71,11 +71,48 @@ app.post('/api/my/domains', async (req, res) => {
     if (!domainName) {
       return res.status(400).json({ error: 'domainName is required' });
     }
+    const domainRegex = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
+    const cleaned = domainName.trim().toLowerCase();
+    if (!domainRegex.test(cleaned)) {
+      return res.status(400).json({ error: 'Invalid domain name. Use format: example.com' });
+    }
     const client = await getOrCreateClient(userId);
+
+    const existing = await db
+      .select()
+      .from(domains)
+      .where(and(eq(domains.clientId, client.id), eq(domains.domainName, cleaned)));
+    if (existing.length > 0) {
+      return res.status(409).json({ error: 'You already added this domain' });
+    }
+
     const inserted = await db
       .insert(domains)
-      .values({ clientId: client.id, domainName, status: 'pending' })
+      .values({ clientId: client.id, domainName: cleaned, status: 'pending' })
       .returning();
+
+    let existsInMigadu = false;
+    try {
+      await axios.get(`https://api.migadu.com/v1/domains/${cleaned}`, { auth: migaduAuth });
+      existsInMigadu = true;
+    } catch (e) {
+      existsInMigadu = false;
+    }
+
+    if (!existsInMigadu) {
+      try {
+        await axios.post('https://api.migadu.com/v1/domains', { domain_name: cleaned }, { auth: migaduAuth });
+      } catch (migaduError) {
+        console.error('Migadu domain create failed:', {
+          status: migaduError.response?.status,
+          data: migaduError.response?.data,
+          message: migaduError.message,
+        });
+        await db.delete(domains).where(eq(domains.id, inserted[0].id));
+        return res.status(500).json({ error: 'Failed to create domain in Migadu' });
+      }
+    }
+
     res.json({ domain: inserted[0] });
   } catch (error) {
     res.status(500).json({ error: error.message });
