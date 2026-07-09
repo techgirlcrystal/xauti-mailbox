@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
+const path = require('path');
 const { clerkMiddleware, getAuth, clerkClient } = require('@clerk/express');
 const { eq, and } = require('drizzle-orm');
 const { db } = require('./db');
@@ -414,6 +415,14 @@ app.delete('/api/admin/domains/:domainId', async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
+});
+
+const FRONTEND_DIST = path.join(__dirname, '..', 'frontend', 'dist');
+app.use(express.static(FRONTEND_DIST));
+
+// SPA fallback: any non-API route serves index.html
+app.get(/^(?!\/api).*/, (req, res) => {
+  res.sendFile(path.join(FRONTEND_DIST, 'index.html'));
 });
 
 app.listen(PORT, () => {

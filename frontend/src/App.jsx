@@ -37,7 +37,7 @@ function Domains() {
   const [newDomain, setNewDomain] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const API = import.meta.env.VITE_API_URL
+  const API = import.meta.env.VITE_API_URL || ''
 
   async function fetchDomains() {
     setLoading(true)
@@ -112,7 +112,7 @@ function Domains() {
 
 function AdminPanel() {
   const { getToken } = useAuth()
-  const API = import.meta.env.VITE_API_URL
+  const API = import.meta.env.VITE_API_URL || ''
   const [isAdmin, setIsAdmin] = useState(null)
   const [clients, setClients] = useState([])
   const [error, setError] = useState(null)
@@ -308,7 +308,7 @@ function AdminPanel() {
 
 function DnsSetup({ domain }) {
   const { getToken } = useAuth()
-  const API = import.meta.env.VITE_API_URL
+  const API = import.meta.env.VITE_API_URL || ''
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -393,7 +393,7 @@ function DnsSetup({ domain }) {
 
 function Mailboxes({ domain }) {
   const { getToken } = useAuth()
-  const API = import.meta.env.VITE_API_URL
+  const API = import.meta.env.VITE_API_URL || ''
   const [mailboxes, setMailboxes] = useState([])
   const [localPart, setLocalPart] = useState('')
   const [password, setPassword] = useState('')
