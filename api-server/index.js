@@ -136,6 +136,51 @@ app.get('/api/domains/:domain/mailboxes', async (req, res) => {
   }
 });
 
+app.get('/api/domains/:domain/dns', async (req, res) => {
+  try {
+    const client = await requireDomainOwnership(req, res);
+    if (!client) return;
+    const { domain } = req.params;
+    const domainResponse = await axios.get(
+      `https://api.migadu.com/v1/domains/${domain}`,
+      { auth: migaduAuth }
+    );
+    let diagnostics = null;
+    try {
+      const diagnosticsResponse = await axios.get(
+        `https://api.migadu.com/v1/domains/${domain}/diagnostics`,
+        { auth: migaduAuth }
+      );
+      diagnostics = diagnosticsResponse.data;
+    } catch (e) {
+      diagnostics = null;
+    }
+    try {
+      const newStatus = diagnostics?.status === 'ok' ? 'verified' : 'pending';
+      console.log('Updating domain status:', { domain, clientId: client.id, newStatus, diagnosticsStatus: diagnostics?.status });
+      await db
+        .update(domains)
+        .set({ status: newStatus })
+        .where(and(eq(domains.clientId, client.id), eq(domains.domainName, domain)));
+    } catch (e) {
+      console.error('Failed to update domain status:', e.message);
+    }
+
+    const records = [
+      { type: 'MX', name: '@', value: 'aspmx1.migadu.com', priority: 10, note: 'Primary mail server' },
+      { type: 'MX', name: '@', value: 'aspmx2.migadu.com', priority: 20, note: 'Backup mail server' },
+      { type: 'TXT', name: '@', value: 'v=spf1 include:spf.migadu.com -all', note: 'SPF - authorizes Migadu to send mail' },
+      { type: 'CNAME', name: 'key1._domainkey', value: `key1.${domain}._domainkey.migadu.com`, note: 'DKIM key 1' },
+      { type: 'CNAME', name: 'key2._domainkey', value: `key2.${domain}._domainkey.migadu.com`, note: 'DKIM key 2' },
+      { type: 'CNAME', name: 'key3._domainkey', value: `key3.${domain}._domainkey.migadu.com`, note: 'DKIM key 3' },
+      { type: 'TXT', name: '_dmarc', value: 'v=DMARC1; p=quarantine;', note: 'DMARC policy' },
+    ];
+    res.json({ domain: domainResponse.data, diagnostics, records });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post('/api/domains/:domain/mailboxes', async (req, res) => {
   try {
     const client = await requireDomainOwnership(req, res);

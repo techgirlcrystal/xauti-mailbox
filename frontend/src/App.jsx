@@ -91,6 +91,7 @@ function Domains() {
         {domains.map((d) => (
           <li key={d.id}>
             {d.domainName} — {d.status}
+            <DnsSetup domain={d.domainName} />
             <Mailboxes domain={d.domainName} />
           </li>
         ))}
@@ -102,6 +103,90 @@ function Domains() {
         placeholder="example.com"
       />
       <button onClick={addDomain}>Add Domain</button>
+    </div>
+  )
+}
+
+function DnsSetup({ domain }) {
+  const { getToken } = useAuth()
+  const API = import.meta.env.VITE_API_URL
+  const [data, setData] = useState(null)
+  const [error, setError] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [open, setOpen] = useState(false)
+
+  async function fetchDns() {
+    setLoading(true)
+    setError(null)
+    const token = await getToken()
+    const res = await fetch(`${API}/api/domains/${domain}/dns`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) {
+      setError(`Error ${res.status}`)
+      setLoading(false)
+      return
+    }
+    setData(await res.json())
+    setLoading(false)
+  }
+
+  return (
+    <div>
+      <button
+        onClick={() => {
+          if (!open) fetchDns()
+          setOpen(!open)
+        }}
+      >
+        {open ? 'Hide DNS Setup' : 'Show DNS Setup'}
+      </button>
+
+      {loading && <p>Loading...</p>}
+
+      {open && data && (
+        <div>
+          <h4>DNS Records for {domain}</h4>
+
+          <p>
+            {data.diagnostics?.status === 'ok'
+              ? '✅ Verified and working'
+              : '⏳ Not verified yet — add the records below, then click Recheck'}
+          </p>
+
+          <button onClick={fetchDns}>Recheck</button>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>Name</th>
+                <th>Value</th>
+                <th>Priority</th>
+                <th>Note</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.records.map((r, i) => (
+                <tr key={i}>
+                  <td>{r.type}</td>
+                  <td>{r.name}</td>
+                  <td>{r.value}</td>
+                  <td>{r.priority ?? '-'}</td>
+                  <td>{r.note}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <p>
+            Add these to your domain registrar's DNS settings. Changes can take up
+            to 24 hours.
+          </p>
+        </div>
+      )}
+
+      {error && <p>{error}</p>}
     </div>
   )
 }
