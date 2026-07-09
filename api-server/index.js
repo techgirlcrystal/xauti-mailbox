@@ -58,8 +58,8 @@ async function getLimits(clientId) {
   const rows = await db.select().from(subscriptions).where(eq(subscriptions.clientId, clientId));
   const sub = rows[0];
   return {
-    maxDomains: sub?.maxDomains ?? 5,
-    maxMailboxesPerDomain: sub?.maxMailboxesPerDomain ?? 5,
+    maxDomains: sub?.maxDomains ?? 1,
+    maxMailboxesPerDomain: sub?.maxMailboxesPerDomain ?? 2,
   };
 }
 
@@ -73,6 +73,26 @@ app.get('/api/db-test', async (req, res) => {
     res.json({ connected: true, clientCount: rows.length });
   } catch (error) {
     res.status(500).json({ connected: false, error: error.message });
+  }
+});
+
+app.get('/api/my/plan', async (req, res) => {
+  try {
+    const { userId } = getAuth(req);
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const client = await getOrCreateClient(userId, clerkClient);
+    const rows = await db.select().from(subscriptions).where(eq(subscriptions.clientId, client.id));
+    const sub = rows[0];
+    const clientDomains = await db.select().from(domains).where(eq(domains.clientId, client.id));
+    res.json({
+      plan: sub?.plan || 'free',
+      maxDomains: sub?.maxDomains ?? 1,
+      maxMailboxesPerDomain: sub?.maxMailboxesPerDomain ?? 2,
+      domainsUsed: clientDomains.length,
+      status: sub?.status || 'active',
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 

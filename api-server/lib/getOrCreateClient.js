@@ -1,6 +1,6 @@
 const { eq } = require('drizzle-orm');
 const { db } = require('../db');
-const { clients } = require('../db/schema');
+const { clients, subscriptions } = require('../db/schema');
 
 async function getOrCreateClient(userId, clerkClient) {
   const existing = await db
@@ -31,6 +31,14 @@ async function getOrCreateClient(userId, clerkClient) {
     .insert(clients)
     .values({ clerkUserId: userId, email, name })
     .returning();
+
+  await db.insert(subscriptions).values({
+    clientId: inserted[0].id,
+    plan: 'free',
+    maxDomains: 1,
+    maxMailboxesPerDomain: 2,
+    status: 'active',
+  });
 
   return inserted[0];
 }

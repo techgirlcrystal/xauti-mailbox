@@ -37,6 +37,7 @@ function Domains() {
   const [newDomain, setNewDomain] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [domainsVersion, setDomainsVersion] = useState(0)
   const API = import.meta.env.VITE_API_URL || ''
 
   async function fetchDomains() {
@@ -80,11 +81,13 @@ function Domains() {
     }
     setNewDomain('')
     fetchDomains()
+    setDomainsVersion((v) => v + 1)
   }
 
   return (
     <div>
       <h2>My Domains</h2>
+      <PlanBanner version={domainsVersion} />
 
       {error && <p>{error}</p>}
 
@@ -106,6 +109,39 @@ function Domains() {
         placeholder="example.com"
       />
       <button onClick={addDomain}>Add Domain</button>
+    </div>
+  )
+}
+
+function PlanBanner({ version }) {
+  const { getToken } = useAuth()
+  const API = import.meta.env.VITE_API_URL || ''
+  const [plan, setPlan] = useState(null)
+
+  async function fetchPlan() {
+    const token = await getToken()
+    const res = await fetch(`${API}/api/my/plan`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) return
+    setPlan(await res.json())
+  }
+
+  useEffect(() => {
+    fetchPlan()
+  }, [version])
+
+  if (!plan) return null
+
+  return (
+    <div>
+      <p>
+        <strong>{plan.plan} plan</strong> — {plan.domainsUsed} of {plan.maxDomains}{' '}
+        domains used, up to {plan.maxMailboxesPerDomain} mailboxes per domain
+      </p>
+      {plan.domainsUsed >= plan.maxDomains && (
+        <p>You've reached your domain limit. Contact support to upgrade.</p>
+      )}
     </div>
   )
 }
