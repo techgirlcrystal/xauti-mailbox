@@ -2,10 +2,10 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-const { clerkMiddleware, getAuth } = require('@clerk/express');
+const { clerkMiddleware, getAuth, clerkClient } = require('@clerk/express');
 const { eq, and } = require('drizzle-orm');
 const { db } = require('./db');
-const { clients, domains } = require('./db/schema');
+const { clients, domains, subscriptions } = require('./db/schema');
 const { getOrCreateClient } = require('./lib/getOrCreateClient');
 
 const { MIGADU_EMAIL, MIGADU_API_KEY } = process.env;
@@ -23,7 +23,7 @@ async function requireDomainOwnership(req, res) {
     res.status(401).json({ error: 'Unauthorized' });
     return null;
   }
-  const client = await getOrCreateClient(userId);
+  const client = await getOrCreateClient(userId, clerkClient);
   const owned = await db
     .select()
     .from(domains)
@@ -33,6 +33,17 @@ async function requireDomainOwnership(req, res) {
     return null;
   }
   return client;
+}
+
+async function requireAdmin(req, res) {
+  const { userId } = getAuth(req);
+  if (!userId) { res.status(401).json({ error: 'Unauthorized' }); return null; }
+  const user = await clerkClient.users.getUser(userId);
+  if (user.publicMetadata?.role !== 'admin') {
+    res.status(403).json({ error: 'Admin access required' });
+    return null;
+  }
+  return userId;
 }
 
 app.get('/api/health', (req, res) => {
@@ -52,7 +63,7 @@ app.get('/api/my/domains', async (req, res) => {
   try {
     const { userId } = getAuth(req);
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
-    const client = await getOrCreateClient(userId);
+    const client = await getOrCreateClient(userId, clerkClient);
     const rows = await db
       .select()
       .from(domains)
@@ -76,7 +87,7 @@ app.post('/api/my/domains', async (req, res) => {
     if (!domainRegex.test(cleaned)) {
       return res.status(400).json({ error: 'Invalid domain name. Use format: example.com' });
     }
-    const client = await getOrCreateClient(userId);
+    const client = await getOrCreateClient(userId, clerkClient);
 
     const existing = await db
       .select()
@@ -238,6 +249,39 @@ app.put('/api/domains/:domain/mailboxes/:localPart/password', async (req, res) =
       { auth: migaduAuth }
     );
     res.json({ updated: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/admin/clients', async (req, res) => {
+  try {
+    const adminId = await requireAdmin(req, res);
+    if (!adminId) return;
+    const allClients = await db.select().from(clients);
+    const result = [];
+    for (const client of allClients) {
+      const clientDomains = await db
+        .select()
+        .from(domains)
+        .where(eq(domains.clientId, client.id));
+      const subRows = await db
+        .select()
+        .from(subscriptions)
+        .where(eq(subscriptions.clientId, client.id));
+      result.push({ ...client, domains: clientDomains, subscription: subRows[0] || null });
+    }
+    res.json({ clients: result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/admin/me', async (req, res) => {
+  try {
+    const adminId = await requireAdmin(req, res);
+    if (!adminId) return;
+    res.json({ isAdmin: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

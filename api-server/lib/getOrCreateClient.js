@@ -2,19 +2,34 @@ const { eq } = require('drizzle-orm');
 const { db } = require('../db');
 const { clients } = require('../db/schema');
 
-async function getOrCreateClient(userId) {
+async function getOrCreateClient(userId, clerkClient) {
   const existing = await db
     .select()
     .from(clients)
     .where(eq(clients.clerkUserId, userId));
 
   if (existing.length > 0) {
-    return existing[0];
+    const client = existing[0];
+    if (client.email === '') {
+      const user = await clerkClient.users.getUser(userId);
+      const email = user.primaryEmailAddress?.emailAddress || '';
+      const name = [user.firstName, user.lastName].filter(Boolean).join(' ') || null;
+      const updated = await db
+        .update(clients)
+        .set({ email, name })
+        .where(eq(clients.id, client.id))
+        .returning();
+      return updated[0];
+    }
+    return client;
   }
 
+  const user = await clerkClient.users.getUser(userId);
+  const email = user.primaryEmailAddress?.emailAddress || '';
+  const name = [user.firstName, user.lastName].filter(Boolean).join(' ') || null;
   const inserted = await db
     .insert(clients)
-    .values({ clerkUserId: userId, email: '', name: null })
+    .values({ clerkUserId: userId, email, name })
     .returning();
 
   return inserted[0];

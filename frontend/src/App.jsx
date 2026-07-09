@@ -309,6 +309,7 @@ function Mailboxes({ domain }) {
             {m.address}
             <button onClick={() => deleteMailbox(m.local_part)}>Delete</button>
             <button onClick={() => setChangingFor(m.local_part)}>Change Password</button>
+            <MailboxSettings address={m.address} />
             {changingFor === m.local_part && (
               <div>
                 <input
@@ -358,6 +359,38 @@ function Mailboxes({ domain }) {
         placeholder="confirm password"
       />
       <button onClick={createMailbox}>Create Mailbox</button>
+    </div>
+  )
+}
+
+function MailboxSettings({ address }) {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <div>
+      <button onClick={() => setOpen(!open)}>
+        {open ? 'Hide Settings' : 'Email Settings'}
+      </button>
+
+      {open && (
+        <div>
+          <h5>Settings for {address}</h5>
+          <p><strong>Username:</strong> {address}</p>
+          <p><strong>Password:</strong> the password you set for this mailbox</p>
+
+          <h6>Incoming (IMAP)</h6>
+          <p>Server: imap.migadu.com</p>
+          <p>Port: 993</p>
+          <p>Security: SSL/TLS</p>
+
+          <h6>Outgoing (SMTP)</h6>
+          <p>Server: smtp.migadu.com</p>
+          <p>Port: 465</p>
+          <p>Security: SSL/TLS</p>
+
+          <p>Use these settings in Gmail, Outlook, or Apple Mail to send and receive from this address.</p>
+        </div>
+      )}
     </div>
   )
 }
