@@ -331,6 +331,16 @@ function DnsSetup({ domain }) {
     setLoading(false)
   }
 
+  function downloadZoneFile() {
+    const blob = new Blob([data.zoneFile], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${domain}.zone.txt`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   return (
     <div>
       <button
@@ -355,6 +365,14 @@ function DnsSetup({ domain }) {
           </p>
 
           <button onClick={fetchDns}>Recheck</button>
+
+          <div>
+            <button onClick={downloadZoneFile}>Download DNS Zone File</button>
+            <p>
+              <strong>Important:</strong> After importing into Cloudflare, set every record
+              to "DNS only" (grey cloud). Proxied records will break email delivery.
+            </p>
+          </div>
 
           <table>
             <thead>
