@@ -12,6 +12,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@clerk/express": "^2.1.38",
     "@neondatabase/serverless": "^1.1.0",
     "axios": "^1.18.1",
     "cors": "^2.8.6",
