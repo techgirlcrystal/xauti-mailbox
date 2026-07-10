@@ -208,6 +208,14 @@ app.get('/api/domains/:domain/dns', async (req, res) => {
     } catch (e) {
       diagnostics = null;
     }
+    if (diagnostics?.status === 'ok') {
+      try {
+        await axios.get(`https://api.migadu.com/v1/domains/${domain}/activate`, { auth: migaduAuth });
+      } catch (e) {
+        console.error('Failed to activate domain in Migadu:', e.response?.status, e.message);
+      }
+    }
+
     try {
       const newStatus = diagnostics?.status === 'ok' ? 'verified' : 'pending';
       console.log('Updating domain status:', { domain, clientId: client.id, newStatus, diagnosticsStatus: diagnostics?.status });
