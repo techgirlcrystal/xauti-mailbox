@@ -834,6 +834,7 @@ function Mailboxes({ domain }) {
               </button>
             </div>
             <MailboxSettings address={m.address} />
+            <Forwardings domain={domain} localPart={m.local_part} />
             {changingFor === m.local_part && (
               <div className="flex flex-wrap gap-2 mt-3">
                 <input
@@ -943,6 +944,139 @@ function MailboxSettings({ address }) {
             Use these settings in Gmail, Outlook, or Apple Mail to send and receive
             from this address.
           </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function Forwardings({ domain, localPart }) {
+  const { getToken } = useAuth()
+  const API = import.meta.env.VITE_API_URL || ''
+  const [open, setOpen] = useState(false)
+  const [list, setList] = useState([])
+  const [newAddress, setNewAddress] = useState('')
+  const [error, setError] = useState(null)
+  const [loading, setLoading] = useState(false)
+
+  async function fetchForwardings() {
+    setLoading(true)
+    setError(null)
+    const token = await getToken()
+    const res = await fetch(
+      `${API}/api/domains/${domain}/mailboxes/${localPart}/forwardings`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    )
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      setError(body.error || `Error ${res.status}`)
+      setLoading(false)
+      return
+    }
+    const data = await res.json()
+    setList(data.forwardings || [])
+    setLoading(false)
+  }
+
+  async function addForwarding() {
+    if (!newAddress) return
+    const token = await getToken()
+    const res = await fetch(
+      `${API}/api/domains/${domain}/mailboxes/${localPart}/forwardings`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ address: newAddress }),
+      }
+    )
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      setError(body.error || `Error ${res.status}`)
+      return
+    }
+    setNewAddress('')
+    fetchForwardings()
+  }
+
+  async function removeForwarding(address) {
+    const token = await getToken()
+    const res = await fetch(
+      `${API}/api/domains/${domain}/mailboxes/${localPart}/forwardings/${encodeURIComponent(address)}`,
+      {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    )
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      setError(body.error || `Error ${res.status}`)
+      return
+    }
+    fetchForwardings()
+  }
+
+  return (
+    <div className="mt-3">
+      <button
+        onClick={() => {
+          if (!open) fetchForwardings()
+          setOpen(!open)
+        }}
+        className="bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-md text-sm transition"
+      >
+        {open ? 'Hide Forwarding' : 'Forwarding'}
+      </button>
+
+      {open && (
+        <div className="mt-3 bg-[#071A52] border border-white/10 rounded-lg p-4">
+          <p className="text-sm text-white/60 mb-3">
+            Forward a copy of every message to another inbox. The destination must confirm
+            by clicking a confirmation link we email them.
+          </p>
+          {error && <p className="text-sm text-red-400 mb-2">{error}</p>}
+          {loading && <p className="text-sm text-white/50">Loading...</p>}
+
+          <ul className="space-y-2 mb-4 list-none p-0">
+            {list.map((f) => (
+              <li key={f.address} className="flex items-center justify-between text-sm">
+                <span>
+                  {f.address}
+                  {f.confirmed_at ? (
+                    <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-[#F5B71E]/20 text-[#F5B71E]">confirmed</span>
+                  ) : (
+                    <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-white/10 text-white/60">pending confirmation</span>
+                  )}
+                </span>
+                <button
+                  onClick={() => removeForwarding(f.address)}
+                  className="bg-red-500/20 hover:bg-red-500/30 text-red-300 px-3 py-1.5 rounded-md text-sm transition"
+                >
+                  Remove
+                </button>
+              </li>
+            ))}
+          </ul>
+          {list.length === 0 && !loading && (
+            <p className="text-sm text-white/50 mb-4">No forwarding set up.</p>
+          )}
+
+          <div className="flex gap-2">
+            <input
+              value={newAddress}
+              onChange={(e) => setNewAddress(e.target.value)}
+              placeholder="you@gmail.com"
+              className="flex-1 bg-[#0D2568] border border-white/20 rounded-md px-3 py-2 text-sm placeholder:text-white/30 focus:outline-none focus:border-[#F26A21]"
+            />
+            <button
+              onClick={addForwarding}
+              className="bg-[#F26A21] hover:opacity-90 px-4 py-2 rounded-md text-sm font-semibold transition"
+            >
+              Add
+            </button>
+          </div>
         </div>
       )}
     </div>

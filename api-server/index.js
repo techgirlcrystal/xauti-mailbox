@@ -321,6 +321,66 @@ app.put('/api/domains/:domain/mailboxes/:localPart/password', async (req, res) =
   }
 });
 
+app.get('/api/domains/:domain/mailboxes/:localPart/forwardings', async (req, res) => {
+  try {
+    const client = await requireDomainOwnership(req, res);
+    if (!client) return;
+    const { domain, localPart } = req.params;
+    const response = await axios.get(
+      `https://api.migadu.com/v1/domains/${domain}/mailboxes/${localPart}/forwardings`,
+      { auth: migaduAuth }
+    );
+    res.json(response.data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/domains/:domain/mailboxes/:localPart/forwardings', async (req, res) => {
+  try {
+    const client = await requireDomainOwnership(req, res);
+    if (!client) return;
+    const { address } = req.body;
+    if (!address) {
+      return res.status(400).json({ error: 'Forwarding address is required' });
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) {
+      return res.status(400).json({ error: 'Please enter a valid email address' });
+    }
+    const { domain, localPart } = req.params;
+    const response = await axios.post(
+      `https://api.migadu.com/v1/domains/${domain}/mailboxes/${localPart}/forwardings`,
+      { address },
+      { auth: migaduAuth }
+    );
+    res.json(response.data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/domains/:domain/mailboxes/:localPart/forwardings/:address', async (req, res) => {
+  try {
+    const client = await requireDomainOwnership(req, res);
+    if (!client) return;
+    const { domain, localPart, address } = req.params;
+    try {
+      await axios.delete(
+        `https://api.migadu.com/v1/domains/${domain}/mailboxes/${localPart}/forwardings/${address}`,
+        { auth: migaduAuth }
+      );
+    } catch (migaduError) {
+      if (migaduError.response?.status === 500) {
+        return res.json({ deleted: true });
+      }
+      throw migaduError;
+    }
+    res.json({ deleted: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get('/api/admin/clients', async (req, res) => {
   try {
     const adminId = await requireAdmin(req, res);
