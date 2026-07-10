@@ -187,16 +187,31 @@ app.delete('/api/my/domains/:domain', async (req, res) => {
     }
     const row = rows[0];
 
+    // 1. List all mailboxes on the domain
+    let mailboxList = [];
     try {
-      await axios.delete(`https://api.migadu.com/v1/domains/${domain}`, { auth: migaduAuth });
-    } catch (migaduError) {
-      console.error('Migadu domain delete failed:', {
-        status: migaduError.response?.status,
-        data: migaduError.response?.data,
-        message: migaduError.message,
-      });
-      if (migaduError.response?.status !== 500) {
-        return res.status(500).json({ error: 'Could not delete the domain. Please try again.' });
+      const listRes = await axios.get(
+        `https://api.migadu.com/v1/domains/${domain}/mailboxes`,
+        { auth: migaduAuth }
+      );
+      mailboxList = listRes.data.mailboxes || [];
+    } catch (e) {
+      console.error('Failed to list mailboxes before delete:', e.response?.status, e.message);
+      return res.status(500).json({ error: 'Could not delete the domain. Please try again.' });
+    }
+
+    // 2. Delete each mailbox (Migadu returns HTTP 500 on successful delete)
+    for (const mb of mailboxList) {
+      try {
+        await axios.delete(
+          `https://api.migadu.com/v1/domains/${domain}/mailboxes/${mb.local_part}`,
+          { auth: migaduAuth }
+        );
+      } catch (e) {
+        if (e.response?.status !== 500) {
+          console.error('Failed to delete mailbox before domain delete:', mb.local_part, e.response?.status, e.message);
+          return res.status(500).json({ error: 'Could not delete the domain. Please try again.' });
+        }
       }
     }
 
