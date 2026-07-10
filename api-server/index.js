@@ -190,6 +190,11 @@ app.delete('/api/my/domains/:domain', async (req, res) => {
     try {
       await axios.delete(`https://api.migadu.com/v1/domains/${domain}`, { auth: migaduAuth });
     } catch (migaduError) {
+      console.error('Migadu domain delete failed:', {
+        status: migaduError.response?.status,
+        data: migaduError.response?.data,
+        message: migaduError.message,
+      });
       if (migaduError.response?.status !== 500) {
         return res.status(500).json({ error: 'Could not delete the domain. Please try again.' });
       }
