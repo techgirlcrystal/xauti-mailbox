@@ -154,7 +154,7 @@ app.post('/api/my/domains', async (req, res) => {
 
     if (!existsInMigadu) {
       try {
-        await axios.post('https://api.migadu.com/v1/domains', { domain_name: cleaned }, { auth: migaduAuth });
+        await axios.post('https://api.migadu.com/v1/domains', { name: cleaned, create_default_addresses: 'true', hosted_dns: 'false' }, { auth: migaduAuth });
       } catch (migaduError) {
         console.error('Migadu domain create failed:', {
           status: migaduError.response?.status,
@@ -162,7 +162,7 @@ app.post('/api/my/domains', async (req, res) => {
           message: migaduError.message,
         });
         await db.delete(domains).where(eq(domains.id, inserted[0].id));
-        return res.status(500).json({ error: 'Failed to create domain in Migadu' });
+        return res.status(500).json({ error: 'We could not set up that domain right now. Please check the spelling and try again.' });
       }
     }
 
@@ -382,7 +382,7 @@ app.post('/api/admin/clients/:clientId/domains', async (req, res) => {
     }
     if (!existsInMigadu) {
       try {
-        await axios.post('https://api.migadu.com/v1/domains', { domain_name: cleaned }, { auth: migaduAuth });
+        await axios.post('https://api.migadu.com/v1/domains', { name: cleaned, create_default_addresses: 'true', hosted_dns: 'false' }, { auth: migaduAuth });
       } catch (migaduError) {
         console.error('Migadu domain create failed:', {
           status: migaduError.response?.status,
@@ -390,7 +390,7 @@ app.post('/api/admin/clients/:clientId/domains', async (req, res) => {
           message: migaduError.message,
         });
         await db.delete(domains).where(eq(domains.id, inserted[0].id));
-        return res.status(500).json({ error: 'Failed to create domain in Migadu' });
+        return res.status(500).json({ error: 'We could not set up that domain right now. Please check the spelling and try again.' });
       }
     }
     res.json({ domain: inserted[0] });
