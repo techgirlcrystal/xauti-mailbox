@@ -196,6 +196,9 @@ function Domains() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [domainsVersion, setDomainsVersion] = useState(0)
+  const [deletingDomain, setDeletingDomain] = useState(null)
+  const [confirmText, setConfirmText] = useState('')
+  const [deleteError, setDeleteError] = useState(null)
   const API = import.meta.env.VITE_API_URL || ''
 
   async function fetchDomains() {
@@ -242,6 +245,28 @@ function Domains() {
     setDomainsVersion((v) => v + 1)
   }
 
+  async function deleteDomain(domainName) {
+    if (confirmText !== domainName) {
+      setDeleteError('The domain name does not match.')
+      return
+    }
+    const token = await getToken()
+    const res = await fetch(`${API}/api/my/domains/${domainName}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      setDeleteError(body.error || `Error ${res.status}`)
+      return
+    }
+    setDeletingDomain(null)
+    setConfirmText('')
+    setDeleteError(null)
+    fetchDomains()
+    setDomainsVersion((v) => v + 1)
+  }
+
   return (
     <div>
       <h2 className="text-2xl font-semibold mb-4">My Domains</h2>
@@ -270,6 +295,12 @@ function Domains() {
               </span>
             </div>
             <DnsSetup domain={d.domainName} />
+            <button
+              onClick={() => { setDeletingDomain(d.domainName); setConfirmText(''); setDeleteError(null) }}
+              className="bg-red-500/20 hover:bg-red-500/30 text-red-300 px-3 py-1.5 rounded-md text-sm transition ml-2"
+            >
+              Delete Domain
+            </button>
             <Mailboxes domain={d.domainName} />
           </li>
         ))}
@@ -289,6 +320,43 @@ function Domains() {
           Add Domain
         </button>
       </div>
+
+      {deletingDomain && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-6 z-50">
+          <div className="bg-[#0D2568] border border-white/10 rounded-xl p-6 max-w-md w-full">
+            <h3 className="text-xl font-semibold mb-2">Delete {deletingDomain}?</h3>
+            <p className="text-sm text-white/70 mb-2">
+              This permanently deletes the domain <strong>and every mailbox on it</strong>.
+              All email and stored messages will be lost. This cannot be undone.
+            </p>
+            <p className="text-sm text-white/70 mb-4">
+              Type <strong className="text-[#F26A21]">{deletingDomain}</strong> to confirm.
+            </p>
+            {deleteError && <p className="text-sm text-red-400 mb-2">{deleteError}</p>}
+            <input
+              value={confirmText}
+              onChange={(e) => setConfirmText(e.target.value)}
+              placeholder={deletingDomain}
+              className="w-full bg-[#071A52] border border-white/20 rounded-md px-3 py-2 text-sm placeholder:text-white/30 focus:outline-none focus:border-[#F26A21] mb-4"
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => { setDeletingDomain(null); setConfirmText(''); setDeleteError(null) }}
+                className="bg-white/10 hover:bg-white/20 px-4 py-2 rounded-md text-sm transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => deleteDomain(deletingDomain)}
+                disabled={confirmText !== deletingDomain}
+                className="bg-red-500/80 hover:bg-red-500 disabled:opacity-30 disabled:cursor-not-allowed px-4 py-2 rounded-md text-sm font-semibold transition"
+              >
+                Delete Forever
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

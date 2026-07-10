@@ -172,6 +172,36 @@ app.post('/api/my/domains', async (req, res) => {
   }
 });
 
+app.delete('/api/my/domains/:domain', async (req, res) => {
+  try {
+    const { userId } = getAuth(req);
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const client = await getOrCreateClient(userId, clerkClient);
+    const { domain } = req.params;
+    const rows = await db
+      .select()
+      .from(domains)
+      .where(and(eq(domains.clientId, client.id), eq(domains.domainName, domain)));
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Domain not found' });
+    }
+    const row = rows[0];
+
+    try {
+      await axios.delete(`https://api.migadu.com/v1/domains/${domain}`, { auth: migaduAuth });
+    } catch (migaduError) {
+      if (migaduError.response?.status !== 500) {
+        return res.status(500).json({ error: 'Could not delete the domain. Please try again.' });
+      }
+    }
+
+    await db.delete(domains).where(eq(domains.id, row.id));
+    res.json({ deleted: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get('/api/domains/:domain/mailboxes', async (req, res) => {
   try {
     const client = await requireDomainOwnership(req, res);
