@@ -1005,8 +1005,8 @@ function MailboxSettings({ address }) {
 
           <h6 className="font-semibold mt-3 text-[#F5B71E]">Outgoing (SMTP)</h6>
           <p className="opacity-80">Server: smtp.migadu.com</p>
-          <p className="opacity-80">Port: 465</p>
-          <p className="opacity-80">Security: SSL/TLS</p>
+          <p className="opacity-80">Port: 587</p>
+          <p className="opacity-80">Security: STARTTLS</p>
 
           <p className="opacity-70 mt-3">
             Use these settings in Gmail, Outlook, or Apple Mail to send and receive
