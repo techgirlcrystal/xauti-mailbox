@@ -8,6 +8,7 @@ const { eq, and } = require('drizzle-orm');
 const { db } = require('./db');
 const { clients, domains, subscriptions } = require('./db/schema');
 const { getOrCreateClient } = require('./lib/getOrCreateClient');
+const { syncPostmaster } = require('./lib/syncPostmaster');
 
 const { MIGADU_EMAIL, MIGADU_API_KEY } = process.env;
 const PORT = process.env.PORT || 3001;
@@ -17,6 +18,13 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(clerkMiddleware());
+
+// Best-effort: never fail the user's request over the postmaster alias
+function syncPostmasterQuietly(domain) {
+  syncPostmaster(domain, migaduAuth).catch(e =>
+    console.error('Postmaster sync failed:', domain, e.response?.status, e.response?.data || e.message)
+  );
+}
 
 async function requireDomainOwnership(req, res) {
   const { userId } = getAuth(req);
@@ -331,6 +339,7 @@ app.post('/api/domains/:domain/mailboxes', async (req, res) => {
       { local_part: localPart, name: name || localPart, password },
       { auth: migaduAuth }
     );
+    syncPostmasterQuietly(domain);
     res.json(response.data);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -348,11 +357,10 @@ app.delete('/api/domains/:domain/mailboxes/:localPart', async (req, res) => {
         { auth: migaduAuth }
       );
     } catch (migaduError) {
-      if (migaduError.response?.status === 500) {
-        return res.json({ deleted: true });
-      }
-      throw migaduError;
+      // Migadu returns 500 on a successful delete
+      if (migaduError.response?.status !== 500) throw migaduError;
     }
+    syncPostmasterQuietly(domain);
     res.json({ deleted: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
