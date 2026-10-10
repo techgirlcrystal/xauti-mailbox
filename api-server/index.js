@@ -62,6 +62,17 @@ function validateDomainName(name) {
   return domainRegex.test(cleaned) ? cleaned : null;
 }
 
+async function getMigaduRecords(domain) {
+  const { data: r } = await axios.get(`https://api.migadu.com/v1/domains/${domain}/records`, { auth: migaduAuth });
+  return [
+    { type: 'TXT', name: r.dns_verification.name, value: r.dns_verification.value, note: 'Domain ownership verification (required)' },
+    ...r.mx_records.map(m => ({ type: 'MX', name: m.name, value: m.value, priority: m.priority, note: 'Mail server' })),
+    { type: 'TXT', name: r.spf.name, value: r.spf.value, note: 'SPF - authorizes sending' },
+    ...r.dkim.map((d, i) => ({ type: 'CNAME', name: d.name, value: d.value, note: `DKIM key ${i + 1}` })),
+    { type: 'TXT', name: r.dmarc.name, value: r.dmarc.value, note: 'DMARC policy' },
+  ];
+}
+
 async function getLimits(clientId) {
   const rows = await db.select().from(subscriptions).where(eq(subscriptions.clientId, clientId));
   const sub = rows[0];
@@ -285,19 +296,7 @@ app.get('/api/domains/:domain/dns', async (req, res) => {
       console.error('Failed to update domain status:', e.message);
     }
 
-    const recordsResponse = await axios.get(
-      `https://api.migadu.com/v1/domains/${domain}/records`,
-      { auth: migaduAuth }
-    );
-    const r = recordsResponse.data;
-
-    const records = [
-      { type: 'TXT', name: r.dns_verification.name, value: r.dns_verification.value, note: 'Domain ownership verification (required)' },
-      ...r.mx_records.map(m => ({ type: 'MX', name: m.name, value: m.value, priority: m.priority, note: 'Mail server' })),
-      { type: 'TXT', name: r.spf.name, value: r.spf.value, note: 'SPF - authorizes sending' },
-      ...r.dkim.map((d, i) => ({ type: 'CNAME', name: d.name, value: d.value, note: `DKIM key ${i + 1}` })),
-      { type: 'TXT', name: r.dmarc.name, value: r.dmarc.value, note: 'DMARC policy' },
-    ];
+    const records = await getMigaduRecords(domain);
 
     const zoneLines = records.map(rec => {
       const host = rec.name === '@' ? `${domain}.` : `${rec.name}.${domain}.`;
@@ -316,6 +315,143 @@ ${zoneLines.join('\n')}
     res.json({ domain: domainResponse.data, diagnostics, records, zoneFile });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// --- Cloudflare auto-connect ---------------------------------------------
+// The customer pastes a Cloudflare API token (DNS edit). We use it for this
+// one request and never store it. Preview shows what will change; apply does it.
+
+const CF_API = 'https://api.cloudflare.com/client/v4';
+
+function cfFqdn(name, domain) {
+  if (!name || name === '@') return domain;
+  const n = name.replace(/\.$/, '').toLowerCase();
+  return n === domain || n.endsWith(`.${domain}`) ? n : `${n}.${domain}`;
+}
+
+function cfNormalize(value) {
+  return String(value || '').trim().replace(/^"|"$/g, '').replace(/\.$/, '').toLowerCase();
+}
+
+async function cfGetZone(token, domain) {
+  const headers = { Authorization: `Bearer ${token}` };
+  const zoneRes = await axios.get(`${CF_API}/zones`, { headers, params: { name: domain } });
+  const zone = zoneRes.data.result?.[0];
+  if (!zone) return null;
+  const existing = [];
+  for (let page = 1; page <= 20; page++) {
+    const r = await axios.get(`${CF_API}/zones/${zone.id}/dns_records`, { headers, params: { per_page: 500, page } });
+    existing.push(...r.data.result);
+    if (page >= (r.data.result_info?.total_pages || 1)) break;
+  }
+  return { zone, existing };
+}
+
+function cfPlan(domain, desired, existing) {
+  const want = desired.map(d => ({
+    type: d.type,
+    name: cfFqdn(d.name, domain),
+    content: String(d.value).replace(/\.$/, ''),
+    priority: d.priority,
+    note: d.note,
+  }));
+  const same = (w, e) =>
+    w.type === e.type &&
+    w.name === e.name.toLowerCase() &&
+    cfNormalize(w.content) === cfNormalize(e.content) &&
+    (w.type !== 'MX' || Number(w.priority) === Number(e.priority));
+
+  const toAdd = [];
+  const toFix = [];   // already there but proxied (orange cloud), must be grey
+  const alreadyOk = [];
+  for (const w of want) {
+    const match = existing.find(e => same(w, e));
+    if (!match) toAdd.push(w);
+    else if (match.proxied) toFix.push({ ...w, id: match.id });
+    else alreadyOk.push(w);
+  }
+
+  const dmarcName = `_dmarc.${domain}`;
+  const dkimNames = want.filter(w => w.type === 'CNAME').map(w => w.name);
+  const toRemove = existing.filter(e => {
+    if (want.some(w => same(w, e))) return false;
+    const name = e.name.toLowerCase();
+    const content = cfNormalize(e.content);
+    if (e.type === 'MX' && name === domain) return true;                         // old mail servers
+    if (e.type === 'TXT' && name === domain && content.startsWith('v=spf1')) return true; // old SPF
+    if (e.type === 'TXT' && name === dmarcName) return true;                      // old DMARC
+    if (dkimNames.includes(name)) return true;                                    // anything sitting on a DKIM name
+    return false;
+  }).map(e => ({ id: e.id, type: e.type, name: e.name, content: e.content, priority: e.priority }));
+
+  return { toAdd, toFix, toRemove, alreadyOk };
+}
+
+function cfError(error) {
+  const status = error.response?.status;
+  if (status === 401 || status === 403) return 'Cloudflare did not accept that token. Make sure you copied the whole thing and it has DNS Edit permission.';
+  return error.response?.data?.errors?.[0]?.message || error.message || 'Cloudflare request failed';
+}
+
+async function cfPrepare(req, res) {
+  const client = await requireDomainOwnership(req, res);
+  if (!client) return null;
+  const token = String(req.body?.token || '').trim();
+  if (!token) { res.status(400).json({ error: 'Paste your Cloudflare token first.' }); return null; }
+  const { domain } = req.params;
+  const found = await cfGetZone(token, domain);
+  if (!found) {
+    res.status(404).json({ error: `We could not find ${domain} in that Cloudflare account. Make sure the token covers this domain.` });
+    return null;
+  }
+  const desired = await getMigaduRecords(domain);
+  return { token, domain, zone: found.zone, plan: cfPlan(domain, desired, found.existing) };
+}
+
+app.post('/api/domains/:domain/cloudflare/preview', async (req, res) => {
+  try {
+    const ctx = await cfPrepare(req, res);
+    if (!ctx) return;
+    res.json({ zone: ctx.zone.name, ...ctx.plan });
+  } catch (error) {
+    res.status(500).json({ error: cfError(error) });
+  }
+});
+
+app.post('/api/domains/:domain/cloudflare/apply', async (req, res) => {
+  try {
+    const ctx = await cfPrepare(req, res);
+    if (!ctx) return;
+    const { token, zone, plan } = ctx;
+    const headers = { Authorization: `Bearer ${token}` };
+    const base = `${CF_API}/zones/${zone.id}/dns_records`;
+    const failed = [];
+
+    for (const r of plan.toRemove) {
+      try { await axios.delete(`${base}/${r.id}`, { headers }); }
+      catch (e) { failed.push({ action: 'remove', record: r, error: cfError(e) }); }
+    }
+    for (const r of plan.toFix) {
+      try { await axios.patch(`${base}/${r.id}`, { proxied: false }, { headers }); }
+      catch (e) { failed.push({ action: 'fix', record: r, error: cfError(e) }); }
+    }
+    for (const r of plan.toAdd) {
+      const body = { type: r.type, name: r.name, content: r.content, ttl: 1, proxied: false };
+      if (r.type === 'MX') body.priority = Number(r.priority);
+      try { await axios.post(base, body, { headers }); }
+      catch (e) { failed.push({ action: 'add', record: r, error: cfError(e) }); }
+    }
+
+    console.log('Cloudflare connect:', { domain: ctx.domain, removed: plan.toRemove.length, fixed: plan.toFix.length, added: plan.toAdd.length, failed: failed.length });
+    res.json({
+      removed: plan.toRemove.length,
+      fixed: plan.toFix.length,
+      added: plan.toAdd.length,
+      failed,
+    });
+  } catch (error) {
+    res.status(500).json({ error: cfError(error) });
   }
 });
 

@@ -711,6 +711,10 @@ function DnsSetup({ domain }) {
             Recheck
           </button>
 
+          {data.diagnostics?.status !== 'ok' && (
+            <CloudflareConnect domain={domain} onDone={fetchDns} />
+          )}
+
           <div className="mt-4">
             <button
               className="bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-md text-sm transition"
@@ -760,6 +764,188 @@ function DnsSetup({ domain }) {
       )}
 
       {error && <p className="text-[#F26A21] text-sm mt-2">{error}</p>}
+    </div>
+  )
+}
+
+const CF_TOKEN_URL =
+  'https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=' +
+  encodeURIComponent(JSON.stringify([{ key: 'dns', type: 'edit' }])) +
+  '&accountId=*&zoneId=all&name=' +
+  encodeURIComponent('Xauti Mailbox')
+
+function CloudflareConnect({ domain, onDone }) {
+  const { getToken } = useAuth()
+  const API = import.meta.env.VITE_API_URL || ''
+  const [open, setOpen] = useState(false)
+  const [cfToken, setCfToken] = useState('')
+  const [plan, setPlan] = useState(null)
+  const [result, setResult] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  async function call(step) {
+    setBusy(true)
+    setError(null)
+    const token = await getToken()
+    const res = await fetch(`${API}/api/domains/${domain}/cloudflare/${step}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: cfToken }),
+    })
+    const body = await res.json().catch(() => ({}))
+    setBusy(false)
+    if (!res.ok) {
+      setError(body.error || `Error ${res.status}`)
+      return null
+    }
+    return body
+  }
+
+  async function preview() {
+    setResult(null)
+    const body = await call('preview')
+    if (body) setPlan(body)
+  }
+
+  async function apply() {
+    const body = await call('apply')
+    if (!body) return
+    setResult(body)
+    setPlan(null)
+    setCfToken('')
+    onDone()
+  }
+
+  const recLine = (r) =>
+    `${r.type}  ${r.name}  ${r.priority != null && r.type === 'MX' ? r.priority + ' ' : ''}${r.content}`
+
+  if (!open) {
+    return (
+      <div className="mt-4 bg-[#F26A21]/10 border border-[#F26A21]/30 rounded-lg p-4">
+        <p className="text-sm mb-3">
+          Is your domain on Cloudflare? We can add every record for you in about a minute.
+        </p>
+        <button
+          className="bg-[#F26A21] hover:bg-[#D95A15] px-4 py-2 rounded-full text-sm font-semibold transition"
+          onClick={() => setOpen(true)}
+        >
+          Connect Cloudflare
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="mt-4 bg-white/5 border border-[#F26A21]/30 rounded-lg p-4 space-y-4">
+      <h5 className="font-semibold">Connect Cloudflare</h5>
+
+      <div>
+        <p className="text-sm font-semibold">Step 1. Create a key for us</p>
+        <p className="text-sm opacity-80 mt-1">
+          This opens Cloudflare with everything filled in. The key can only edit DNS
+          records, nothing else. Scroll down, click <strong>Continue to summary</strong>,
+          then <strong>Create Token</strong>, and copy the token it shows you.
+        </p>
+        <a
+          href={CF_TOKEN_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-block mt-2 bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-md text-sm transition"
+        >
+          Open Cloudflare
+        </a>
+      </div>
+
+      <div>
+        <p className="text-sm font-semibold">Step 2. Paste the token here</p>
+        <input
+          type="password"
+          value={cfToken}
+          onChange={(e) => { setCfToken(e.target.value); setPlan(null) }}
+          placeholder="Paste your Cloudflare token"
+          className="mt-2 w-full bg-black/30 border border-white/10 rounded-md px-3 py-2 text-sm font-mono"
+        />
+        <p className="text-xs opacity-60 mt-1">
+          We use it once to add your records and never save it. You can delete it in
+          Cloudflare afterward.
+        </p>
+        <button
+          disabled={!cfToken || busy}
+          onClick={preview}
+          className="mt-2 bg-white/10 hover:bg-white/20 disabled:opacity-40 px-3 py-1.5 rounded-md text-sm transition"
+        >
+          {busy && !plan ? 'Checking...' : 'Check my domain'}
+        </button>
+      </div>
+
+      {plan && (
+        <div>
+          <p className="text-sm font-semibold">Step 3. Review and confirm</p>
+          {plan.toRemove.length > 0 && (
+            <div className="mt-2 bg-[#F26A21]/10 border border-[#F26A21]/40 rounded-md p-3">
+              <p className="text-sm font-semibold text-[#F26A21]">
+                These old email records will be removed
+              </p>
+              <p className="text-xs opacity-80 mt-1">
+                If you still get email somewhere else (Google, Outlook, another host),
+                that email stops arriving there once you confirm.
+              </p>
+              <ul className="mt-2 text-xs font-mono space-y-1 break-all">
+                {plan.toRemove.map((r) => <li key={r.id}>{recLine(r)}</li>)}
+              </ul>
+            </div>
+          )}
+          {(plan.toAdd.length > 0 || plan.toFix.length > 0) && (
+            <div className="mt-2 bg-white/5 border border-white/10 rounded-md p-3">
+              <p className="text-sm font-semibold">These records will be added</p>
+              <ul className="mt-2 text-xs font-mono space-y-1 break-all">
+                {plan.toAdd.map((r, i) => <li key={i}>{recLine(r)}</li>)}
+                {plan.toFix.map((r) => <li key={r.id}>{recLine(r)} (switch to DNS only)</li>)}
+              </ul>
+            </div>
+          )}
+          {plan.alreadyOk.length > 0 && (
+            <p className="text-xs opacity-60 mt-2">
+              {plan.alreadyOk.length} record(s) are already set up correctly.
+            </p>
+          )}
+          {plan.toAdd.length + plan.toFix.length + plan.toRemove.length === 0 ? (
+            <p className="text-sm mt-2">Everything is already in place. Click Recheck above.</p>
+          ) : (
+            <button
+              disabled={busy}
+              onClick={apply}
+              className="mt-3 bg-[#F26A21] hover:bg-[#D95A15] disabled:opacity-40 px-4 py-2 rounded-full text-sm font-semibold transition"
+            >
+              {busy ? 'Updating Cloudflare...' : 'Confirm and update my DNS'}
+            </button>
+          )}
+        </div>
+      )}
+
+      {result && (
+        <div className="text-sm">
+          {result.failed.length === 0 ? (
+            <p>
+              Done. Added {result.added}, removed {result.removed}
+              {result.fixed ? `, fixed ${result.fixed}` : ''}. Verification can take a few
+              minutes. Click Recheck above.
+            </p>
+          ) : (
+            <div className="text-[#F26A21]">
+              <p>Some records did not go through:</p>
+              <ul className="text-xs font-mono mt-1 space-y-1 break-all">
+                {result.failed.map((f, i) => (
+                  <li key={i}>{f.action} {f.record.type} {f.record.name}: {f.error}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      {error && <p className="text-[#F26A21] text-sm">{error}</p>}
     </div>
   )
 }
